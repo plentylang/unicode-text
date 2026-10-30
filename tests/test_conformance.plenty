@@ -1,0 +1,109 @@
+# The official UAX #29 test files for Unicode 17.0.0, unmodified. Each line
+# lists code points in hexadecimal, with `÷` at a boundary and `×` where
+# there is none; `#` starts a comment.
+
+import std.bytes
+import std.test
+import unicode_text
+from support.spell import hex_digit, push_scalar
+from std.bytes import Bytes, BytesError
+from std.test import TestError
+
+const GRAPHEME_TESTS: str = include_str("data/GraphemeBreakTest.txt")
+const WORD_TESTS: str = include_str("data/WordBreakTest.txt")
+const SENTENCE_TESTS: str = include_str("data/SentenceBreakTest.txt")
+
+const GRAPHEMES: i64 = 0
+const WORDS: i64 = 1
+const SENTENCES: i64 = 2
+
+type CaseError = TestError | BytesError | AllocError | IoError
+
+
+
+# Scalar and byte boundaries, including 0 and the end, of one segmentation.
+def boundaries(text: &str, kind: i64, scalars: &mut list[i64], bytes: &mut list[i64]) -> Result[(), AllocError]:
+    scalars.clear()
+    bytes.clear()
+    scalars.append(0)?
+    bytes.append(0)?
+    if kind == GRAPHEMES:
+        for span in unicode_text.graphemes(*text):
+            scalars.append(span.stop)?
+            bytes.append(span.byte_stop)?
+    elif kind == WORDS:
+        for span in unicode_text.word_bounds(*text):
+            scalars.append(span.stop)?
+            bytes.append(span.byte_stop)?
+    else:
+        for span in unicode_text.sentences(*text):
+            scalars.append(span.stop)?
+            bytes.append(span.byte_stop)?
+    Ok(())
+
+
+# Runs every case in `cases`; returns the number that passed after reporting
+# each failure.
+def run(cases: &str, kind: i64) -> Result[i64, CaseError]:
+    mut buffer = std.bytes.empty()?
+    mut expected: list[i64] = []?
+    mut expected_bytes: list[i64] = []?
+    mut got: list[i64] = []?
+    mut got_bytes: list[i64] = []?
+    mut value = -1
+    mut count = 0
+    mut comment = False
+    mut passed = 0
+    mut failed = 0
+    for scalar in *cases:
+        if scalar == "\n":
+            if not buffer.is_empty():
+                text = buffer.to_text()?
+                boundaries(&text, kind, &mut got, &mut got_bytes)?
+                if got == expected and got_bytes == expected_bytes:
+                    passed += 1
+                else:
+                    failed += 1
+                    print("case", expected_bytes, "expected", expected, "got", got, got_bytes)?
+            buffer.clear()
+            expected.clear()
+            expected_bytes.clear()
+            comment = False
+            value = -1
+            count = 0
+        elif comment:
+            pass
+        else:
+            digit = hex_digit(&scalar)
+            if digit >= 0:
+                value = (0 if value < 0 else value * 16) + digit
+            else:
+                if value >= 0:
+                    push_scalar(&mut buffer, value)?
+                    count += 1
+                    value = -1
+                if scalar == "#":
+                    comment = True
+                elif scalar == "÷":
+                    expected.append(count)?
+                    expected_bytes.append(buffer.len())?
+    std.test.equal(&failed, &0)?
+    Ok(passed)
+
+
+def test_grapheme_break_test() -> Result[(), CaseError]:
+    passed = run(&GRAPHEME_TESTS, GRAPHEMES)?
+    std.test.equal(&passed, &766)?
+    Ok(())
+
+
+def test_word_break_test() -> Result[(), CaseError]:
+    passed = run(&WORD_TESTS, WORDS)?
+    std.test.equal(&passed, &1944)?
+    Ok(())
+
+
+def test_sentence_break_test() -> Result[(), CaseError]:
+    passed = run(&SENTENCE_TESTS, SENTENCES)?
+    std.test.equal(&passed, &512)?
+    Ok(())

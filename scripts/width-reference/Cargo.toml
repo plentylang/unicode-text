@@ -1,0 +1,13 @@
+# Development tool: prints reference display widths from the Rust
+# `unicode-width` crate, which defines the semantics unicode_text follows.
+# Not part of the Plenty package.
+[package]
+name = "width-reference"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+unicode-width = "=0.2.2"
+
+[workspace]

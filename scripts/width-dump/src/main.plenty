@@ -1,0 +1,70 @@
+# Prints `S code narrow wide` with `scalar_width` for every Unicode scalar,
+# then `narrow wide` with `width` for each line of the file named by the first
+# argument. Each line of that file is space-separated hexadecimal code points.
+
+import std.bytes
+import unicode_text
+from std.bytes import Bytes, BytesError
+from unicode_text import Ambiguous
+
+
+def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), BytesError]:
+    if c < 128:
+        buffer.push(u8(c))?
+    elif c < 2048:
+        buffer.push(u8(192 | (c >> 6)))?
+        buffer.push(u8(128 | (c & 63)))?
+    elif c < 65536:
+        buffer.push(u8(224 | (c >> 12)))?
+        buffer.push(u8(128 | ((c >> 6) & 63)))?
+        buffer.push(u8(128 | (c & 63)))?
+    else:
+        buffer.push(u8(240 | (c >> 18)))?
+        buffer.push(u8(128 | ((c >> 12) & 63)))?
+        buffer.push(u8(128 | ((c >> 6) & 63)))?
+        buffer.push(u8(128 | (c & 63)))?
+    Ok(())
+
+
+def hex_digit(scalar: &str) -> i64:
+    match ord(*scalar):
+        case Ok(value):
+            d = i64(value)
+            if d <= 57:
+                return d - 48
+            if d <= 70:
+                return d - 55
+            d - 87
+        case Err(_):
+            0
+
+
+def main() -> Result[(), AllocError | IoError | BytesError]:
+    arguments = args()?
+    mut buffer = std.bytes.empty()?
+    mut c = 0
+    while c <= 1114111:
+        # Skip the surrogates U+D800 to U+DFFF.
+        if c < 55296 or c > 57343:
+            buffer.clear()
+            push_scalar(&mut buffer, c)?
+            text = buffer.to_text()?
+            narrow = unicode_text.scalar_width(&text, Ambiguous.Narrow)
+            wide = unicode_text.scalar_width(&text, Ambiguous.Wide)
+            print("S", c, narrow, wide)?
+        c += 1
+    corpus = read_text(&arguments[1])?
+    buffer.clear()
+    mut value = -1
+    for scalar in corpus:
+        if scalar == "\n" or scalar == " ":
+            if value >= 0:
+                push_scalar(&mut buffer, value)?
+                value = -1
+            if scalar == "\n":
+                text = buffer.to_text()?
+                print(unicode_text.width(&text, Ambiguous.Narrow), unicode_text.width(&text, Ambiguous.Wide))?
+                buffer.clear()
+        else:
+            value = (0 if value < 0 else value * 16) + hex_digit(&scalar)
+    Ok(())

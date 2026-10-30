@@ -1,0 +1,11 @@
+# Development tool for scripts/compare_width.py: prints unicode_text's widths
+# so they can be compared with the Rust unicode-width crate.
+manifest-version = 1
+
+[package]
+name = "width_dump"
+version = "0.0.0"
+plenty-version = "0.7.1"
+
+[dependencies]
+unicode_text = { path = "../.." }

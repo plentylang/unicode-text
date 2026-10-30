@@ -1,0 +1,107 @@
+# Expected values agree with the Rust unicode-width crate 0.2.2, which
+# scripts/compare_width.py checks for every scalar and a large corpus.
+
+import std.test
+import unicode_text
+from support.spell import spell
+from std.bytes import BytesError
+from std.test import TestError
+from unicode_text import Ambiguous
+
+const EMOJI_TESTS: str = include_str("data/emoji-test.txt")
+
+
+def both(text: &str, narrow: i64, wide: i64) -> Result[(), TestError]:
+    std.test.equal(&unicode_text.width(text, Ambiguous.Narrow), &narrow)?
+    std.test.equal(&unicode_text.width(text, Ambiguous.Wide), &wide)?
+    Ok(())
+
+
+def test_plain_and_east_asian_text() -> Result[(), TestError | AllocError | BytesError]:
+    both("", 0, 0)?
+    both("abc", 3, 3)?
+    both("日本語", 6, 6)?
+    both("ｱｲｳ", 3, 3)?
+    both("Привет", 6, 6)?
+    Ok(())
+
+
+def test_marks_and_invisible_scalars() -> Result[(), TestError | AllocError | BytesError]:
+    both(spell("e<301>")?, 1, 1)?
+    both(spell("<200B>")?, 0, 0)?
+    both(spell("a<AD>b")?, 2, 2)?
+    Ok(())
+
+
+def test_ambiguous_width_is_chosen_by_the_caller() -> Result[(), TestError | AllocError | BytesError]:
+    both("±", 1, 2)?
+    both("§1", 2, 3)?
+    Ok(())
+
+
+def test_emoji_sequences() -> Result[(), TestError | AllocError | BytesError]:
+    both(spell("👩<200D>🔬")?, 2, 2)?
+    both("🇦🇺", 2, 2)?
+    both("👍🏽", 2, 2)?
+    both(spell("#<FE0F><20E3>")?, 2, 2)?
+    both(spell("🏳<FE0F><200D>🌈")?, 2, 2)?
+    both(spell("<2764>")?, 1, 1)?
+    both(spell("<2764><FE0F>")?, 2, 2)?
+    Ok(())
+
+
+def test_controls_count_one_column() -> Result[(), TestError | AllocError | BytesError]:
+    both("\t", 1, 1)?
+    both("a\r\nb", 3, 3)?
+    both(spell("<1B>[31m")?, 5, 5)?
+    Ok(())
+
+
+def test_scalar_width() -> Result[(), TestError | AllocError | BytesError]:
+    none: Option[i64] = Nothing
+    std.test.equal(&unicode_text.scalar_width("a", Ambiguous.Narrow), &Some(1))?
+    std.test.equal(&unicode_text.scalar_width("あ", Ambiguous.Narrow), &Some(2))?
+    std.test.equal(&unicode_text.scalar_width(spell("<301>")?, Ambiguous.Narrow), &Some(0))?
+    std.test.equal(&unicode_text.scalar_width("±", Ambiguous.Narrow), &Some(1))?
+    std.test.equal(&unicode_text.scalar_width("±", Ambiguous.Wide), &Some(2))?
+    std.test.equal(&unicode_text.scalar_width("\n", Ambiguous.Narrow), &none)?
+    std.test.equal(&unicode_text.scalar_width(spell("<9F>")?, Ambiguous.Narrow), &none)?
+    std.test.equal(&unicode_text.scalar_width("", Ambiguous.Narrow), &none)?
+    std.test.equal(&unicode_text.scalar_width("ab", Ambiguous.Narrow), &none)?
+    Ok(())
+
+
+# Every fully-qualified emoji and component in emoji-test.txt is two columns.
+def test_emoji_test_file() -> Result[(), TestError | AllocError | BytesError]:
+    mut checked = 0
+    for line in EMOJI_TESTS.split("\n")?:
+        if line.startswith("#") or ";" not in line:
+            continue
+        if "fully-qualified" not in line and "; component" not in line:
+            continue
+        match line.find("# "):
+            case Some(hash):
+                # The comment starts with the emoji itself, then a space.
+                comment = line.slice(hash + 2, len(line))?
+                match comment.find(" "):
+                    case Some(space):
+                        emoji = comment.slice(0, space)?
+                        both(&emoji, 2, 2)?
+                        checked += 1
+                    case Nothing:
+                        std.test.fail("emoji line without a name")?
+            case Nothing:
+                std.test.fail("emoji line without a comment")?
+    std.test.equal(&checked, &3953)?
+    Ok(())
+
+
+def test_width_allocates_nothing() -> Result[(), TestError | AllocError | BytesError]:
+    text = spell("日本語 👩<200D>🔬 e<301> ±")?
+    std.test.fail_allocations_after(0)?
+    narrow = unicode_text.width(&text, Ambiguous.Narrow)
+    wide = unicode_text.width(&text, Ambiguous.Wide)
+    std.test.restore_allocations()?
+    std.test.equal(&narrow, &13)?
+    std.test.equal(&wide, &14)?
+    Ok(())

@@ -1,0 +1,58 @@
+# Plenty string literals have no code point escape, so tests write invisible
+# and combining scalars as `<HEX>`, which `spell` replaces.
+
+import std.bytes
+from std.bytes import Bytes, BytesError
+
+
+pub def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), BytesError]:
+    if c < 128:
+        buffer.push(u8(c))?
+    elif c < 2048:
+        buffer.push(u8(192 | (c >> 6)))?
+        buffer.push(u8(128 | (c & 63)))?
+    elif c < 65536:
+        buffer.push(u8(224 | (c >> 12)))?
+        buffer.push(u8(128 | ((c >> 6) & 63)))?
+        buffer.push(u8(128 | (c & 63)))?
+    else:
+        buffer.push(u8(240 | (c >> 18)))?
+        buffer.push(u8(128 | ((c >> 12) & 63)))?
+        buffer.push(u8(128 | ((c >> 6) & 63)))?
+        buffer.push(u8(128 | (c & 63)))?
+    Ok(())
+
+
+pub def code(scalar: &str) -> i64:
+    match ord(*scalar):
+        case Ok(value):
+            i64(value)
+        case Err(_):
+            -1
+
+
+pub def hex_digit(scalar: &str) -> i64:
+    value = code(scalar)
+    if value >= 48 and value <= 57:
+        return value - 48
+    if value >= 65 and value <= 70:
+        return value - 55
+    if value >= 97 and value <= 102:
+        return value - 87
+    -1
+
+
+pub def spell(text: &str) -> Result[str, BytesError]:
+    mut buffer = std.bytes.empty()?
+    mut value = -1
+    for scalar in *text:
+        if scalar == "<":
+            value = 0
+        elif scalar == ">" and value >= 0:
+            push_scalar(&mut buffer, value)?
+            value = -1
+        elif value >= 0:
+            value = value * 16 + hex_digit(&scalar)
+        else:
+            push_scalar(&mut buffer, code(&scalar))?
+    buffer.to_text()

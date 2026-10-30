@@ -1,0 +1,104 @@
+import std.test
+import std.unicode
+import unicode_text
+from support.spell import spell
+from std.bytes import BytesError
+from std.test import TestError
+from unicode_text import Span
+
+
+def test_version_matches_std_unicode() -> Result[(), TestError]:
+    std.test.equal(&unicode_text.unicode_version(), &std.unicode.version())?
+    Ok(())
+
+
+def test_grapheme_spans_carry_scalar_and_byte_offsets() -> Result[(), TestError | AllocError | BytesError]:
+    mut spans: list[Span] = []?
+    for span in unicode_text.graphemes(spell("e<301>🇦🇺!")?):
+        spans.append(span)?
+    std.test.equal(&len(spans), &3)?
+    std.test.equal(&spans[0], &Span(0, 2, 0, 3))?
+    std.test.equal(&spans[1], &Span(2, 4, 3, 11))?
+    std.test.equal(&spans[2], &Span(4, 5, 11, 12))?
+    Ok(())
+
+
+def test_empty_text_has_no_segments() -> Result[(), TestError | AllocError | BytesError]:
+    mut count = 0
+    for _ in unicode_text.graphemes(""):
+        count += 1
+    for _ in unicode_text.word_bounds(""):
+        count += 1
+    for _ in unicode_text.words(""):
+        count += 1
+    for _ in unicode_text.sentences(""):
+        count += 1
+    std.test.equal(&count, &0)?
+    Ok(())
+
+
+def test_grapheme_list() -> Result[(), TestError | AllocError | BytesError]:
+    pieces = unicode_text.grapheme_list(spell("👩<200D>🔬 नमस्ते")?)?
+    expected = [spell("👩<200D>🔬")?, " ", "न", "म", "स्ते"]?
+    std.test.equal(&pieces, &expected)?
+    Ok(())
+
+
+def test_word_bound_list_keeps_every_segment() -> Result[(), TestError | AllocError | BytesError]:
+    pieces = unicode_text.word_bound_list("Don't stop, 3.14!")?
+    expected = ["Don't", " ", "stop", ",", " ", "3.14", "!"]?
+    std.test.equal(&pieces, &expected)?
+    Ok(())
+
+
+def test_word_list_keeps_alphanumeric_segments() -> Result[(), TestError | AllocError | BytesError]:
+    pieces = unicode_text.word_list("The quick (\"brown\") fox can't jump 32.3 feet, right?")?
+    expected = ["The", "quick", "brown", "fox", "can't", "jump", "32.3", "feet", "right"]?
+    std.test.equal(&pieces, &expected)?
+    Ok(())
+
+
+def test_word_list_with_no_spaces_between_scripts() -> Result[(), TestError | AllocError | BytesError]:
+    pieces = unicode_text.word_list("日本語のテキスト")?
+    expected = ["日", "本", "語", "の", "テキスト"]?
+    std.test.equal(&pieces, &expected)?
+    Ok(())
+
+
+# UAX #29 has no abbreviation list, so "Mr. " ends a sentence.
+def test_sentence_list() -> Result[(), TestError | AllocError | BytesError]:
+    pieces = unicode_text.sentence_list("Mr. Smith arrived. He said \"Hi!\" Then left.")?
+    expected = ["Mr. ", "Smith arrived. ", "He said \"Hi!\" ", "Then left."]?
+    std.test.equal(&pieces, &expected)?
+    Ok(())
+
+
+def test_iteration_allocates_nothing() -> Result[(), TestError | AllocError | BytesError]:
+    text = spell("Hello, wörld! 👩<200D>🔬 are here. Ça va? 日本語のテキスト.")?
+    std.test.fail_allocations_after(0)?
+    mut graphemes = 0
+    for _ in unicode_text.graphemes(text):
+        graphemes += 1
+    mut bounds = 0
+    for _ in unicode_text.word_bounds(text):
+        bounds += 1
+    mut words = 0
+    for _ in unicode_text.words(text):
+        words += 1
+    mut sentences = 0
+    for _ in unicode_text.sentences(text):
+        sentences += 1
+    std.test.restore_allocations()?
+    std.test.equal(&graphemes, &42)?
+    std.test.equal(&bounds, &24)?
+    std.test.equal(&words, &11)?
+    std.test.equal(&sentences, &4)?
+    Ok(())
+
+
+def test_lists_return_allocation_failure() -> Result[(), TestError]:
+    std.test.fail_allocations_after(0)?
+    result = unicode_text.word_list("two words")
+    std.test.restore_allocations()?
+    std.test.is_err(&result)?
+    Ok(())

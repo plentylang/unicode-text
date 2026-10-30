@@ -1,0 +1,476 @@
+# Unicode text segmentation (UAX #29) and terminal display width.
+#
+# Positions are scalar indices, as for `str.find` and `str.slice`; each Span
+# also carries UTF-8 byte offsets. README.md describes the contract.
+
+import std.bytes
+import tables
+import width as display
+
+
+# The Unicode version of every table in this package.
+pub def unicode_version() -> str:
+    tables.UNICODE_VERSION
+
+
+# One segment of a text: scalars `start..stop` and UTF-8 bytes
+# `byte_start..byte_stop`, both half-open.
+@copy
+pub class Span:
+    pub start: i64
+    pub stop: i64
+    pub byte_start: i64
+    pub byte_stop: i64
+
+
+def code(scalar: &str) -> i64:
+    match ord(*scalar):
+        case Ok(value):
+            i64(value)
+        case Err(_):
+            # String iteration yields exactly one scalar, so ord cannot fail.
+            0
+
+
+# ---------------------------------------------------------------------------
+# Extended grapheme clusters (UAX #29 section 3)
+
+
+def is_control(kind: i64) -> bool:
+    kind == tables.GCB_CR or kind == tables.GCB_LF or kind == tables.GCB_CONTROL
+
+
+# GB3 to GB999 between a scalar of kind `prev` and one of kind `kind`.
+# `conjunct` is GB9c's InCB Consonant [Extend Linker]* Linker × Consonant,
+# `emoji` GB11's ExtPict Extend* ZWJ × ExtPict, and `odd_ri` true after an odd
+# run of regional indicators (GB12, GB13).
+def grapheme_break(prev: i64, kind: i64, conjunct: bool, emoji: bool, odd_ri: bool) -> bool:
+    if prev == tables.GCB_CR and kind == tables.GCB_LF:
+        return False
+    if is_control(prev) or is_control(kind):
+        return True
+    if prev == tables.GCB_L:
+        if kind == tables.GCB_L or kind == tables.GCB_V or kind == tables.GCB_LV or kind == tables.GCB_LVT:
+            return False
+    if (prev == tables.GCB_LV or prev == tables.GCB_V) and (kind == tables.GCB_V or kind == tables.GCB_T):
+        return False
+    if (prev == tables.GCB_LVT or prev == tables.GCB_T) and kind == tables.GCB_T:
+        return False
+    if kind == tables.GCB_EXTEND or kind == tables.GCB_ZWJ or kind == tables.GCB_SPACINGMARK:
+        return False
+    if prev == tables.GCB_PREPEND or conjunct or emoji:
+        return False
+    if prev == tables.GCB_REGIONAL_INDICATOR and kind == tables.GCB_REGIONAL_INDICATOR:
+        return not odd_ri
+    True
+
+
+# Extended grapheme clusters of `text`, in order. Allocates nothing.
+pub def graphemes(text: str) -> Generator[Span]:
+    mut index = 0
+    mut offset = 0
+    mut start = 0
+    mut byte_start = 0
+    mut prev = -1
+    # 0: none, 1: InCB Consonant [Extend Linker]*, 2: that with a Linker.
+    mut conjunct = 0
+    # 0: none, 1: ExtPict Extend*, 2: ExtPict Extend* ZWJ.
+    mut emoji = 0
+    mut ri = 0
+    for scalar in text:
+        value = tables.grapheme(code(&scalar))
+        kind = value & 15
+        incb = (value >> 4) & 3
+        pict = (value & tables.GRAPHEME_EXT_PICT) != 0
+        if prev >= 0:
+            joins_conjunct = conjunct == 2 and incb == tables.INCB_CONSONANT
+            joins_emoji = emoji == 2 and pict
+            if grapheme_break(prev, kind, joins_conjunct, joins_emoji, ri % 2 == 1):
+                yield Span(start, index, byte_start, offset)
+                start = index
+                byte_start = offset
+        if incb == tables.INCB_CONSONANT:
+            conjunct = 1
+        elif incb == tables.INCB_LINKER and conjunct > 0:
+            conjunct = 2
+        elif incb != tables.INCB_EXTEND:
+            conjunct = 0
+        if pict:
+            emoji = 1
+        elif kind == tables.GCB_ZWJ and emoji == 1:
+            emoji = 2
+        elif not (kind == tables.GCB_EXTEND and emoji == 1):
+            emoji = 0
+        ri = ri + 1 if kind == tables.GCB_REGIONAL_INDICATOR else 0
+        prev = kind
+        index += 1
+        offset += scalar.byte_len()
+    if index > 0:
+        yield Span(start, index, byte_start, offset)
+
+
+# ---------------------------------------------------------------------------
+# Word boundaries (UAX #29 section 4)
+
+
+def is_ah_letter(kind: i64) -> bool:
+    kind == tables.WB_ALETTER or kind == tables.WB_HEBREW_LETTER
+
+
+def is_mid_letter_q(kind: i64) -> bool:
+    kind == tables.WB_MIDLETTER or kind == tables.WB_MIDNUMLET or kind == tables.WB_SINGLE_QUOTE
+
+
+def is_mid_num_q(kind: i64) -> bool:
+    kind == tables.WB_MIDNUM or kind == tables.WB_MIDNUMLET or kind == tables.WB_SINGLE_QUOTE
+
+
+def is_newline(kind: i64) -> bool:
+    kind == tables.WB_CR or kind == tables.WB_LF or kind == tables.WB_NEWLINE
+
+
+def is_word_ignored(kind: i64) -> bool:
+    kind == tables.WB_EXTEND or kind == tables.WB_FORMAT or kind == tables.WB_ZWJ
+
+
+const NO_BREAK: i64 = 0
+const BREAK: i64 = 1
+# The boundary depends on the next scalar that WB4 does not ignore.
+const NEEDS_LETTER: i64 = 2
+const NEEDS_HEBREW: i64 = 3
+const NEEDS_NUMBER: i64 = 4
+# WB4: the scalar continues the preceding one.
+const ABSORBED: i64 = 5
+const UNDECIDED: i64 = 6
+
+
+# WB5 to WB999 over the WB4-reduced sequence `before last | kind`.
+def word_rule(before: i64, last: i64, kind: i64, odd_ri: bool) -> i64:
+    if is_ah_letter(last) and is_ah_letter(kind):
+        return NO_BREAK
+    if is_ah_letter(last) and is_mid_letter_q(kind):
+        if last == tables.WB_HEBREW_LETTER and kind == tables.WB_SINGLE_QUOTE:
+            return NO_BREAK
+        return NEEDS_LETTER
+    if is_ah_letter(before) and is_mid_letter_q(last) and is_ah_letter(kind):
+        return NO_BREAK
+    if last == tables.WB_HEBREW_LETTER and kind == tables.WB_DOUBLE_QUOTE:
+        return NEEDS_HEBREW
+    if before == tables.WB_HEBREW_LETTER and last == tables.WB_DOUBLE_QUOTE and kind == tables.WB_HEBREW_LETTER:
+        return NO_BREAK
+    if (last == tables.WB_NUMERIC or is_ah_letter(last)) and kind == tables.WB_NUMERIC:
+        return NO_BREAK
+    if last == tables.WB_NUMERIC and is_ah_letter(kind):
+        return NO_BREAK
+    if before == tables.WB_NUMERIC and is_mid_num_q(last) and kind == tables.WB_NUMERIC:
+        return NO_BREAK
+    if last == tables.WB_NUMERIC and is_mid_num_q(kind):
+        return NEEDS_NUMBER
+    if last == tables.WB_KATAKANA and kind == tables.WB_KATAKANA:
+        return NO_BREAK
+    letter_like = is_ah_letter(last) or last == tables.WB_NUMERIC or last == tables.WB_KATAKANA
+    if kind == tables.WB_EXTENDNUMLET and (letter_like or last == tables.WB_EXTENDNUMLET):
+        return NO_BREAK
+    if last == tables.WB_EXTENDNUMLET:
+        if is_ah_letter(kind) or kind == tables.WB_NUMERIC or kind == tables.WB_KATAKANA:
+            return NO_BREAK
+    if last == tables.WB_REGIONAL_INDICATOR and kind == tables.WB_REGIONAL_INDICATOR and odd_ri:
+        return NO_BREAK
+    BREAK
+
+
+# WB3 to WB4, which look at the unreduced previous scalar `raw`.
+def word_adjacent_rule(raw: i64, kind: i64, pict: bool) -> i64:
+    if raw < 0:
+        return NO_BREAK
+    if raw == tables.WB_CR and kind == tables.WB_LF:
+        return NO_BREAK
+    if is_newline(raw) or is_newline(kind):
+        return BREAK
+    if raw == tables.WB_ZWJ and pict:
+        return NO_BREAK
+    if raw == tables.WB_WSEGSPACE and kind == tables.WB_WSEGSPACE:
+        return NO_BREAK
+    if is_word_ignored(kind):
+        return ABSORBED
+    UNDECIDED
+
+
+def satisfies(need: i64, kind: i64) -> bool:
+    if need == NEEDS_LETTER:
+        return is_ah_letter(kind)
+    if need == NEEDS_HEBREW:
+        return kind == tables.WB_HEBREW_LETTER
+    kind == tables.WB_NUMERIC
+
+
+# Word-boundary segments; with `words_only`, only those with an alphanumeric
+# scalar. A boundary that WB6, WB7b or WB12 leaves open waits at `pending` for
+# the next scalar that WB4 does not ignore.
+def word_segments(text: str, words_only: bool) -> Generator[Span]:
+    mut index = 0
+    mut offset = 0
+    mut start = 0
+    mut byte_start = 0
+    mut alnum = False
+    mut raw = -1
+    mut last = -1
+    mut before = -1
+    mut ri = 0
+    mut need = NO_BREAK
+    mut pending = 0
+    mut pending_byte = 0
+    mut pending_alnum = False
+    for scalar in text:
+        value = tables.word(code(&scalar))
+        kind = value & 31
+        pict = (value & tables.WORD_EXT_PICT) != 0
+        mut decision = word_adjacent_rule(raw, kind, pict)
+        if need != NO_BREAK and not is_word_ignored(kind):
+            if satisfies(need, kind):
+                alnum = alnum or pending_alnum
+            else:
+                if alnum or not words_only:
+                    yield Span(start, pending, byte_start, pending_byte)
+                start = pending
+                byte_start = pending_byte
+                alnum = pending_alnum
+            need = NO_BREAK
+        if decision == UNDECIDED:
+            decision = word_rule(before, last, kind, ri % 2 == 1)
+        if decision == BREAK:
+            if alnum or not words_only:
+                yield Span(start, index, byte_start, offset)
+            start = index
+            byte_start = offset
+            alnum = False
+        elif decision != NO_BREAK and decision != ABSORBED:
+            need = decision
+            pending = index
+            pending_byte = offset
+            pending_alnum = False
+        is_alnum = (value & tables.WORD_ALNUM) != 0
+        if need != NO_BREAK:
+            pending_alnum = pending_alnum or is_alnum
+        else:
+            alnum = alnum or is_alnum
+        raw = kind
+        if decision != ABSORBED:
+            before = last
+            last = kind
+            ri = ri + 1 if kind == tables.WB_REGIONAL_INDICATOR else 0
+        index += 1
+        offset += scalar.byte_len()
+    if need != NO_BREAK:
+        if alnum or not words_only:
+            yield Span(start, pending, byte_start, pending_byte)
+        start = pending
+        byte_start = pending_byte
+        alnum = pending_alnum
+    if index > 0 and (alnum or not words_only):
+        yield Span(start, index, byte_start, offset)
+
+
+# Every segment between UAX #29 word boundaries, including spaces and
+# punctuation, in order. Allocates nothing.
+pub def word_bounds(text: str) -> Generator[Span]:
+    word_segments(text, False)
+
+
+# The word-boundary segments that contain an alphanumeric scalar (Alphabetic,
+# or general category Nd, Nl or No), in order. Allocates nothing.
+pub def words(text: str) -> Generator[Span]:
+    word_segments(text, True)
+
+
+# ---------------------------------------------------------------------------
+# Sentence boundaries (UAX #29 section 5)
+
+
+def is_para_sep(kind: i64) -> bool:
+    kind == tables.SB_SEP or kind == tables.SB_CR or kind == tables.SB_LF
+
+
+def is_sa_term(kind: i64) -> bool:
+    kind == tables.SB_ATERM or kind == tables.SB_STERM
+
+
+# Whether a scalar ends SB8's lookahead: OLetter, Upper, Lower, ParaSep or SATerm.
+def ends_lookahead(kind: i64) -> bool:
+    if kind == tables.SB_OLETTER or kind == tables.SB_UPPER or kind == tables.SB_LOWER:
+        return True
+    is_para_sep(kind) or is_sa_term(kind)
+
+
+# SB6 to SB10 after SATerm Close* (phase 1) or SATerm Close* Sp+ (phase 2).
+# `last` is the previous reduced scalar and `before_term` the one before the
+# terminator.
+def sentence_continues(aterm: bool, phase: i64, last: i64, before_term: i64, kind: i64) -> bool:
+    if aterm and last == tables.SB_ATERM:
+        if kind == tables.SB_NUMERIC:
+            return True
+        if kind == tables.SB_UPPER and (before_term == tables.SB_UPPER or before_term == tables.SB_LOWER):
+            return True
+    if aterm and kind == tables.SB_LOWER:
+        return True
+    if kind == tables.SB_SCONTINUE or is_sa_term(kind):
+        return True
+    if phase == 1 and kind == tables.SB_CLOSE:
+        return True
+    kind == tables.SB_SP or is_para_sep(kind)
+
+
+# Sentences of `text`, in order. Allocates nothing.
+pub def sentences(text: str) -> Generator[Span]:
+    mut index = 0
+    mut offset = 0
+    mut start = 0
+    mut byte_start = 0
+    mut raw = -1
+    mut last = -1
+    mut before_term = -1
+    # 0: outside a terminator, 1: SATerm Close*, 2: SATerm Close* Sp+.
+    mut phase = 0
+    mut aterm = False
+    # An SB11 boundary that SB8 removes if a Lower follows before a scalar
+    # that ends the lookahead.
+    mut pending = -1
+    mut pending_byte = 0
+    for scalar in text:
+        kind = tables.sentence(code(&scalar))
+        ignored = kind == tables.SB_EXTEND or kind == tables.SB_FORMAT
+        if raw == tables.SB_CR and kind == tables.SB_LF:
+            last = kind
+        elif raw >= 0 and not is_para_sep(raw) and ignored:
+            # SB5: Extend and Format continue the preceding scalar.
+            pass
+        else:
+            if raw >= 0 and is_para_sep(raw):
+                yield Span(start, index, byte_start, offset)
+                start = index
+                byte_start = offset
+                phase = 0
+                pending = -1
+            elif raw >= 0:
+                if pending >= 0 and ends_lookahead(kind):
+                    if kind != tables.SB_LOWER:
+                        yield Span(start, pending, byte_start, pending_byte)
+                        start = pending
+                        byte_start = pending_byte
+                    pending = -1
+                if phase > 0 and not sentence_continues(aterm, phase, last, before_term, kind):
+                    if aterm and not ends_lookahead(kind):
+                        pending = index
+                        pending_byte = offset
+                    else:
+                        yield Span(start, index, byte_start, offset)
+                        start = index
+                        byte_start = offset
+            if is_sa_term(kind):
+                before_term = last
+                phase = 1
+                aterm = kind == tables.SB_ATERM
+            elif kind == tables.SB_SP and phase > 0:
+                phase = 2
+            elif not (kind == tables.SB_CLOSE and phase == 1):
+                phase = 0
+            last = kind
+        raw = kind
+        index += 1
+        offset += scalar.byte_len()
+    if pending >= 0:
+        yield Span(start, pending, byte_start, pending_byte)
+        start = pending
+        byte_start = pending_byte
+    if index > 0:
+        yield Span(start, index, byte_start, offset)
+
+
+# ---------------------------------------------------------------------------
+# Display width
+
+
+# How to count East Asian Ambiguous characters, such as `±` and Cyrillic in
+# some CJK fonts. Terminals usually treat them as Narrow; CJK legacy contexts as
+# Wide. There is no default because the choice depends on the terminal.
+pub enum Ambiguous:
+    Narrow
+    Wide
+
+
+def is_wide(ambiguous: Ambiguous) -> bool:
+    match ambiguous:
+        case Ambiguous.Narrow:
+            False
+        case Ambiguous.Wide:
+            True
+
+
+# The columns a terminal uses to display `text`. Follows the Rust
+# unicode-width crate's `width` and `width_cjk`: emoji presentation and ZWJ
+# sequences, combining marks and default-ignorable scalars count zero, and each
+# control scalar counts one ("\r\n" counts one). Strip or escape controls before
+# measuring if they will not be displayed as one column. Allocates nothing.
+pub def width(text: &str, ambiguous: Ambiguous) -> i64:
+    display.text_width(text, is_wide(ambiguous))
+
+
+# The columns of one scalar on its own, or `Nothing` for a control scalar
+# (U+0000 to U+001F and U+007F to U+009F) or text that is not exactly one
+# scalar. Sequences such as emoji with selectors need `width`.
+pub def scalar_width(scalar: &str, ambiguous: Ambiguous) -> Option[i64]:
+    match ord(*scalar):
+        case Ok(value):
+            display.scalar_width(i64(value), is_wide(ambiguous))
+        case Err(_):
+            Nothing
+
+
+# ---------------------------------------------------------------------------
+# Allocating conveniences
+
+
+def allocation(error: std.bytes.BytesError) -> AllocError:
+    match error:
+        case std.bytes.BytesError.Allocation(cause):
+            cause
+        case _:
+            # Spans come from the same text, so ranges are valid UTF-8 boundaries.
+            AllocError.OutOfMemory
+
+
+def collect(text: &str, spans: Generator[Span]) -> Result[list[str], AllocError]:
+    source = match std.bytes.from_text(text):
+        case Ok(value):
+            value
+        case Err(error):
+            return Err(allocation(error))
+    mut pieces: list[str] = []?
+    for span in spans:
+        piece = match source.to_text_range(span.byte_start, span.byte_stop):
+            case Ok(value):
+                value
+            case Err(error):
+                return Err(allocation(error))
+        pieces.append(piece)?
+    Ok(pieces)
+
+
+# The grapheme clusters of `text` as strings.
+pub def grapheme_list(text: &str) -> Result[list[str], AllocError]:
+    collect(text, graphemes(*text))
+
+
+# Every word-boundary segment of `text` as strings.
+pub def word_bound_list(text: &str) -> Result[list[str], AllocError]:
+    collect(text, word_bounds(*text))
+
+
+# The words of `text`, as `words` selects them, as strings.
+pub def word_list(text: &str) -> Result[list[str], AllocError]:
+    collect(text, words(*text))
+
+
+# The sentences of `text` as strings.
+pub def sentence_list(text: &str) -> Result[list[str], AllocError]:
+    collect(text, sentences(*text))
