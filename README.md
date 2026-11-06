@@ -22,7 +22,7 @@ builds require the companion compiler fix for generator resume storage.
 
 ```toml
 [dependencies]
-unicode_text = { git = "https://github.com/plentylang/unicode-text.git", tag = "v0.1.0" }
+unicode_text = { git = "https://github.com/plentylang/unicode-text.git", tag = "v0.2.0" }
 ```
 
 Then run `plenty fetch` (or any build command).
