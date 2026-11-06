@@ -428,20 +428,22 @@ pub const JOINING_GROUP_LAM: i64 = {lam}
 
 
 def lookup(table: bytes, code: i64) -> i64:
-    if code < 128:
-        return i64(table[code])
-    # Find the last record whose start is not greater than code.
-    mut low = 0
-    mut high = (len(table) - 128) // 4
-    while high - low > 1:
-        middle = (low + high) // 2
-        at = 128 + middle * 4
-        start = (i64(table[at]) << 16) | (i64(table[at + 1]) << 8) | i64(table[at + 2])
-        if start <= code:
-            low = middle
-        else:
-            high = middle
-    i64(table[128 + low * 4 + 3])
+    # Bundled table offsets and byte-sized class numbers fit i64.
+    unchecked trap:
+        if code < 128:
+            return i64(table[code])
+        # Find the last record whose start is not greater than code.
+        mut low = 0
+        mut high = (len(table) - 128) // 4
+        while high - low > 1:
+            middle = (low + high) // 2
+            at = 128 + middle * 4
+            start = (i64(table[at]) << 16) | (i64(table[at + 1]) << 8) | i64(table[at + 2])
+            if start <= code:
+                low = middle
+            else:
+                high = middle
+        i64(table[128 + low * 4 + 3])
 
 
 pub def grapheme(code: i64) -> i64:
@@ -459,23 +461,31 @@ pub def sentence(code: i64) -> i64:
 # A width class is an offset into WIDTH_CLASSES: narrow width, narrow state
 # (2 bytes), wide width, wide state (2 bytes), flags.
 pub def width_class(code: i64) -> i64:
-    lookup(WIDTH, code) * 7
+    # Bundled table offsets and byte-sized class numbers fit i64.
+    unchecked trap:
+        lookup(WIDTH, code) * 7
 
 
 pub def class_width(offset: i64, wide: bool) -> i64:
-    classes = WIDTH_CLASSES
-    i64(classes[offset + 3]) if wide else i64(classes[offset])
+    # Bundled table offsets and byte-sized class numbers fit i64.
+    unchecked trap:
+        classes = WIDTH_CLASSES
+        i64(classes[offset + 3]) if wide else i64(classes[offset])
 
 
 pub def class_state(offset: i64, wide: bool) -> i64:
-    classes = WIDTH_CLASSES
-    at = offset + 4 if wide else offset + 1
-    (i64(classes[at]) << 8) | i64(classes[at + 1])
+    # Bundled table offsets and byte-sized class numbers fit i64.
+    unchecked trap:
+        classes = WIDTH_CLASSES
+        at = offset + 4 if wide else offset + 1
+        (i64(classes[at]) << 8) | i64(classes[at + 1])
 
 
 pub def class_flags(offset: i64) -> i64:
-    classes = WIDTH_CLASSES
-    i64(classes[offset + 6])
+    # Bundled table offsets and byte-sized class numbers fit i64.
+    unchecked trap:
+        classes = WIDTH_CLASSES
+        i64(classes[offset + 6])
 '''
 
 

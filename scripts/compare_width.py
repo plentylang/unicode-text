@@ -68,8 +68,8 @@ def main():
     subprocess.run(["cargo", "build", "--release", "--quiet"], cwd=reference_dir, check=True)
     reference = reference_dir / "target/release/width-reference"
     dump_dir = SCRIPTS / "width-dump"
-    subprocess.run([plenty, "build", "--release"], cwd=dump_dir, check=True)
-    dump = dump_dir / "target/release/width_dump"
+    subprocess.run([plenty, "build"], cwd=dump_dir, check=True)
+    dump = dump_dir / "target/optimized/width_dump"
 
     cases = sequences()
     corpus = "\n".join(" ".join(f"{code:X}" for code in case) for case in cases) + "\n"

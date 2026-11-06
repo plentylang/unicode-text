@@ -14,6 +14,10 @@ the `*_list` conveniences allocate and return `AllocError` on failure.
 
 Data version: **Unicode 17.0.0**, the version of Plenty's `std.unicode`.
 
+Requires Plenty 0.8.10 or later. With 0.8.10, use `--fast-compile`:
+optimized iteration of record-valued generators can corrupt memory. Optimized
+builds require the companion compiler fix for generator resume storage.
+
 ## Install
 
 ```toml

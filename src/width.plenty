@@ -65,7 +65,9 @@ const ADD_BIAS: i64 = 4
 
 
 def step(add: i64, state: i64) -> i64:
-    ((add + ADD_BIAS) << 16) | state
+    # Width states are bounded; total columns are bounded by UTF-8 bytes.
+    unchecked trap:
+        ((add + ADD_BIAS) << 16) | state
 
 
 def with_selector(state: i64, selector: i64) -> i64:
@@ -104,41 +106,43 @@ def is_tifinagh_consonant(c: i64) -> bool:
 
 # Sequences that start from an emoji presentation state or a ZWJ before one.
 def emoji_step(c: i64, info: i64, kind: i64, wide: bool) -> i64:
-    if (info == EMOJI_PRESENTATION or info == SEVERAL_REGIONAL_INDICATOR or info == EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION or info == ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION or info == EMOJI_MODIFIER) and c == 8205:  # 0x200D
-        return step(0, ZWJ_EMOJI_PRESENTATION)
-    if info == ZWJ_EMOJI_PRESENTATION and c == 8419:  # 0x20E3
-        return step(0, KEYCAP_ZWJ_EMOJI_PRESENTATION)
-    if info == VS16_ZWJ_EMOJI_PRESENTATION and (tables.class_flags(kind) & tables.EMOJI_PRESENTATION_SEQ) != 0:
-        return step(0, EMOJI_PRESENTATION)
-    if info == VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION and ((c >= 48 and c <= 57) or c == 35 or c == 42):  # 0x30 0x39 0x23 0x2A
-        return step(0, EMOJI_PRESENTATION)
-    if is_regional_indicator(c):
-        if info == ZWJ_EMOJI_PRESENTATION:
-            return step(1, REGIONAL_INDICATOR_ZWJ_PRESENTATION)
-        if info == REGIONAL_INDICATOR_ZWJ_PRESENTATION or info == ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION:
-            return step(-1, EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
-        if info == EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION:
-            return step(3, ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
-    if info == ZWJ_EMOJI_PRESENTATION and c >= 127995 and c <= 127999:  # 0x1F3FB 0x1F3FF
-        return step(0, EMOJI_MODIFIER)
-    if info == ZWJ_EMOJI_PRESENTATION and c == 917631:  # 0xE007F
-        return step(0, TAG_END_ZWJ_EMOJI_PRESENTATION)
-    if is_tag_letter(c):
-        if info == TAG_END_ZWJ_EMOJI_PRESENTATION:
-            return step(0, TAG_A1_END_ZWJ_EMOJI_PRESENTATION)
-        if info >= TAG_A1_END_ZWJ_EMOJI_PRESENTATION and info <= TAG_A5_END_ZWJ_EMOJI_PRESENTATION:
-            return step(0, info + 1)
-    if is_tag_digit(c):
-        if info == TAG_END_ZWJ_EMOJI_PRESENTATION or (info >= TAG_A1_END_ZWJ_EMOJI_PRESENTATION and info <= TAG_A4_END_ZWJ_EMOJI_PRESENTATION):
-            return step(0, TAG_D1_END_ZWJ_EMOJI_PRESENTATION)
-        if info == TAG_D1_END_ZWJ_EMOJI_PRESENTATION or info == TAG_D2_END_ZWJ_EMOJI_PRESENTATION:
-            return step(0, info + 1)
-    if c == 127988:  # 0x1F3F4
-        if info == TAG_D3_END_ZWJ_EMOJI_PRESENTATION or (info >= TAG_A3_END_ZWJ_EMOJI_PRESENTATION and info <= TAG_A6_END_ZWJ_EMOJI_PRESENTATION):
+    # Width states are bounded; total columns are bounded by UTF-8 bytes.
+    unchecked trap:
+        if (info == EMOJI_PRESENTATION or info == SEVERAL_REGIONAL_INDICATOR or info == EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION or info == ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION or info == EMOJI_MODIFIER) and c == 8205:  # 0x200D
+            return step(0, ZWJ_EMOJI_PRESENTATION)
+        if info == ZWJ_EMOJI_PRESENTATION and c == 8419:  # 0x20E3
+            return step(0, KEYCAP_ZWJ_EMOJI_PRESENTATION)
+        if info == VS16_ZWJ_EMOJI_PRESENTATION and (tables.class_flags(kind) & tables.EMOJI_PRESENTATION_SEQ) != 0:
             return step(0, EMOJI_PRESENTATION)
-    if info == ZWJ_EMOJI_PRESENTATION and tables.class_state(kind, wide) == EMOJI_PRESENTATION:
-        return step(0, EMOJI_PRESENTATION)
-    -1
+        if info == VS16_KEYCAP_ZWJ_EMOJI_PRESENTATION and ((c >= 48 and c <= 57) or c == 35 or c == 42):  # 0x30 0x39 0x23 0x2A
+            return step(0, EMOJI_PRESENTATION)
+        if is_regional_indicator(c):
+            if info == ZWJ_EMOJI_PRESENTATION:
+                return step(1, REGIONAL_INDICATOR_ZWJ_PRESENTATION)
+            if info == REGIONAL_INDICATOR_ZWJ_PRESENTATION or info == ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION:
+                return step(-1, EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
+            if info == EVEN_REGIONAL_INDICATOR_ZWJ_PRESENTATION:
+                return step(3, ODD_REGIONAL_INDICATOR_ZWJ_PRESENTATION)
+        if info == ZWJ_EMOJI_PRESENTATION and c >= 127995 and c <= 127999:  # 0x1F3FB 0x1F3FF
+            return step(0, EMOJI_MODIFIER)
+        if info == ZWJ_EMOJI_PRESENTATION and c == 917631:  # 0xE007F
+            return step(0, TAG_END_ZWJ_EMOJI_PRESENTATION)
+        if is_tag_letter(c):
+            if info == TAG_END_ZWJ_EMOJI_PRESENTATION:
+                return step(0, TAG_A1_END_ZWJ_EMOJI_PRESENTATION)
+            if info >= TAG_A1_END_ZWJ_EMOJI_PRESENTATION and info <= TAG_A5_END_ZWJ_EMOJI_PRESENTATION:
+                return step(0, info + 1)
+        if is_tag_digit(c):
+            if info == TAG_END_ZWJ_EMOJI_PRESENTATION or (info >= TAG_A1_END_ZWJ_EMOJI_PRESENTATION and info <= TAG_A4_END_ZWJ_EMOJI_PRESENTATION):
+                return step(0, TAG_D1_END_ZWJ_EMOJI_PRESENTATION)
+            if info == TAG_D1_END_ZWJ_EMOJI_PRESENTATION or info == TAG_D2_END_ZWJ_EMOJI_PRESENTATION:
+                return step(0, info + 1)
+        if c == 127988:  # 0x1F3F4
+            if info == TAG_D3_END_ZWJ_EMOJI_PRESENTATION or (info >= TAG_A3_END_ZWJ_EMOJI_PRESENTATION and info <= TAG_A6_END_ZWJ_EMOJI_PRESENTATION):
+                return step(0, EMOJI_PRESENTATION)
+        if info == ZWJ_EMOJI_PRESENTATION and tables.class_state(kind, wide) == EMOJI_PRESENTATION:
+            return step(0, EMOJI_PRESENTATION)
+        -1
 
 
 # Ligatures and scripts with contextual width.
@@ -234,19 +238,21 @@ def scalar_in_text(c: i64, next_info: i64, wide: bool) -> i64:
 
 
 pub def text_width(text: &str, wide: bool) -> i64:
-    mut total = 0
-    mut info = DEFAULT
-    for scalar in reversed(*text):
-        mut c = 0
-        match ord(scalar):
-            case Ok(value):
-                c = i64(value)
-            case Err(_):
-                pass
-        packed = scalar_in_text(c, info, wide)
-        total += (packed >> 16) - ADD_BIAS
-        info = packed & 65535  # 0xFFFF
-    total
+    # Width states are bounded; total columns are bounded by UTF-8 bytes.
+    unchecked trap:
+        mut total = 0
+        mut info = DEFAULT
+        for scalar in reversed(*text):
+            mut c = 0
+            match ord(scalar):
+                case Ok(value):
+                    c = i64(value)
+                case Err(_):
+                    pass
+            packed = scalar_in_text(c, info, wide)
+            total += (packed >> 16) - ADD_BIAS
+            info = packed & 65535  # 0xFFFF
+        total
 
 
 pub def scalar_width(c: i64, wide: bool) -> Option[i64]:

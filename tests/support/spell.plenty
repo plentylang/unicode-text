@@ -5,7 +5,7 @@ import std.bytes
 from std.bytes import Bytes, BytesError
 
 
-pub def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), BytesError]:
+pub def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), AllocError]:
     if c < 128:
         buffer.push(u8(c))?
     elif c < 2048:
@@ -32,27 +32,31 @@ pub def code(scalar: &str) -> i64:
 
 
 pub def hex_digit(scalar: &str) -> i64:
-    value = code(scalar)
-    if value >= 48 and value <= 57:
-        return value - 48
-    if value >= 65 and value <= 70:
-        return value - 55
-    if value >= 97 and value <= 102:
-        return value - 87
-    -1
+    # Each branch subtracts from an ASCII digit in its tested range.
+    unchecked trap:
+        value = code(scalar)
+        if value >= 48 and value <= 57:
+            return value - 48
+        if value >= 65 and value <= 70:
+            return value - 55
+        if value >= 97 and value <= 102:
+            return value - 87
+        -1
 
 
-pub def spell(text: &str) -> Result[str, BytesError]:
-    mut buffer = std.bytes.empty()?
-    mut value = -1
-    for scalar in *text:
-        if scalar == "<":
-            value = 0
-        elif scalar == ">" and value >= 0:
-            push_scalar(&mut buffer, value)?
-            value = -1
-        elif value >= 0:
-            value = value * 16 + hex_digit(&scalar)
-        else:
-            push_scalar(&mut buffer, code(&scalar))?
-    buffer.to_text()
+pub def spell(text: &str) -> Result[str, BytesError | AllocError]:
+    # Fixture escapes contain at most six hexadecimal digits.
+    unchecked trap:
+        mut buffer = std.bytes.empty()?
+        mut value = -1
+        for scalar in *text:
+            if scalar == "<":
+                value = 0
+            elif scalar == ">" and value >= 0:
+                push_scalar(&mut buffer, value)?
+                value = -1
+            elif value >= 0:
+                value = value * 16 + hex_digit(&scalar)
+            else:
+                push_scalar(&mut buffer, code(&scalar))?
+        buffer.to_text()

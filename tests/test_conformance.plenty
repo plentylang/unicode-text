@@ -17,7 +17,7 @@ const GRAPHEMES: i64 = 0
 const WORDS: i64 = 1
 const SENTENCES: i64 = 2
 
-type CaseError = TestError | BytesError | AllocError | IoError
+type CaseError = OverflowError[i64] | TestError | BytesError | AllocError | IoError
 
 
 

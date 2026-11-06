@@ -67,46 +67,48 @@ def grapheme_break(prev: i64, kind: i64, conjunct: bool, emoji: bool, odd_ri: bo
 
 # Extended grapheme clusters of `text`, in order. Allocates nothing.
 pub def graphemes(text: str) -> Generator[Span]:
-    mut index = 0
-    mut offset = 0
-    mut start = 0
-    mut byte_start = 0
-    mut prev = -1
-    # 0: none, 1: InCB Consonant [Extend Linker]*, 2: that with a Linker.
-    mut conjunct = 0
-    # 0: none, 1: ExtPict Extend*, 2: ExtPict Extend* ZWJ.
-    mut emoji = 0
-    mut ri = 0
-    for scalar in text:
-        value = tables.grapheme(code(&scalar))
-        kind = value & 15
-        incb = (value >> 4) & 3
-        pict = (value & tables.GRAPHEME_EXT_PICT) != 0
-        if prev >= 0:
-            joins_conjunct = conjunct == 2 and incb == tables.INCB_CONSONANT
-            joins_emoji = emoji == 2 and pict
-            if grapheme_break(prev, kind, joins_conjunct, joins_emoji, ri % 2 == 1):
-                yield Span(start, index, byte_start, offset)
-                start = index
-                byte_start = offset
-        if incb == tables.INCB_CONSONANT:
-            conjunct = 1
-        elif incb == tables.INCB_LINKER and conjunct > 0:
-            conjunct = 2
-        elif incb != tables.INCB_EXTEND:
-            conjunct = 0
-        if pict:
-            emoji = 1
-        elif kind == tables.GCB_ZWJ and emoji == 1:
-            emoji = 2
-        elif not (kind == tables.GCB_EXTEND and emoji == 1):
-            emoji = 0
-        ri = ri + 1 if kind == tables.GCB_REGIONAL_INDICATOR else 0
-        prev = kind
-        index += 1
-        offset += scalar.byte_len()
-    if index > 0:
-        yield Span(start, index, byte_start, offset)
+    # Counters are bounded by the input string length in bytes.
+    unchecked trap:
+        mut index = 0
+        mut offset = 0
+        mut start = 0
+        mut byte_start = 0
+        mut prev = -1
+        # 0: none, 1: InCB Consonant [Extend Linker]*, 2: that with a Linker.
+        mut conjunct = 0
+        # 0: none, 1: ExtPict Extend*, 2: ExtPict Extend* ZWJ.
+        mut emoji = 0
+        mut ri = 0
+        for scalar in text:
+            value = tables.grapheme(code(&scalar))
+            kind = value & 15
+            incb = (value >> 4) & 3
+            pict = (value & tables.GRAPHEME_EXT_PICT) != 0
+            if prev >= 0:
+                joins_conjunct = conjunct == 2 and incb == tables.INCB_CONSONANT
+                joins_emoji = emoji == 2 and pict
+                if grapheme_break(prev, kind, joins_conjunct, joins_emoji, ri % 2 == 1):
+                    yield Span(start, index, byte_start, offset)
+                    start = index
+                    byte_start = offset
+            if incb == tables.INCB_CONSONANT:
+                conjunct = 1
+            elif incb == tables.INCB_LINKER and conjunct > 0:
+                conjunct = 2
+            elif incb != tables.INCB_EXTEND:
+                conjunct = 0
+            if pict:
+                emoji = 1
+            elif kind == tables.GCB_ZWJ and emoji == 1:
+                emoji = 2
+            elif not (kind == tables.GCB_EXTEND and emoji == 1):
+                emoji = 0
+            ri = ri + 1 if kind == tables.GCB_REGIONAL_INDICATOR else 0
+            prev = kind
+            index += 1
+            offset += scalar.byte_len()
+        if index > 0:
+            yield Span(start, index, byte_start, offset)
 
 
 # ---------------------------------------------------------------------------
@@ -208,67 +210,69 @@ def satisfies(need: i64, kind: i64) -> bool:
 # scalar. A boundary that WB6, WB7b or WB12 leaves open waits at `pending` for
 # the next scalar that WB4 does not ignore.
 def word_segments(text: str, words_only: bool) -> Generator[Span]:
-    mut index = 0
-    mut offset = 0
-    mut start = 0
-    mut byte_start = 0
-    mut alnum = False
-    mut raw = -1
-    mut last = -1
-    mut before = -1
-    mut ri = 0
-    mut need = NO_BREAK
-    mut pending = 0
-    mut pending_byte = 0
-    mut pending_alnum = False
-    for scalar in text:
-        value = tables.word(code(&scalar))
-        kind = value & 31
-        pict = (value & tables.WORD_EXT_PICT) != 0
-        mut decision = word_adjacent_rule(raw, kind, pict)
-        if need != NO_BREAK and not is_word_ignored(kind):
-            if satisfies(need, kind):
-                alnum = alnum or pending_alnum
-            else:
+    # Counters are bounded by the input string length in bytes.
+    unchecked trap:
+        mut index = 0
+        mut offset = 0
+        mut start = 0
+        mut byte_start = 0
+        mut alnum = False
+        mut raw = -1
+        mut last = -1
+        mut before = -1
+        mut ri = 0
+        mut need = NO_BREAK
+        mut pending = 0
+        mut pending_byte = 0
+        mut pending_alnum = False
+        for scalar in text:
+            value = tables.word(code(&scalar))
+            kind = value & 31
+            pict = (value & tables.WORD_EXT_PICT) != 0
+            mut decision = word_adjacent_rule(raw, kind, pict)
+            if need != NO_BREAK and not is_word_ignored(kind):
+                if satisfies(need, kind):
+                    alnum = alnum or pending_alnum
+                else:
+                    if alnum or not words_only:
+                        yield Span(start, pending, byte_start, pending_byte)
+                    start = pending
+                    byte_start = pending_byte
+                    alnum = pending_alnum
+                need = NO_BREAK
+            if decision == UNDECIDED:
+                decision = word_rule(before, last, kind, ri % 2 == 1)
+            if decision == BREAK:
                 if alnum or not words_only:
-                    yield Span(start, pending, byte_start, pending_byte)
-                start = pending
-                byte_start = pending_byte
-                alnum = pending_alnum
-            need = NO_BREAK
-        if decision == UNDECIDED:
-            decision = word_rule(before, last, kind, ri % 2 == 1)
-        if decision == BREAK:
-            if alnum or not words_only:
-                yield Span(start, index, byte_start, offset)
-            start = index
-            byte_start = offset
-            alnum = False
-        elif decision != NO_BREAK and decision != ABSORBED:
-            need = decision
-            pending = index
-            pending_byte = offset
-            pending_alnum = False
-        is_alnum = (value & tables.WORD_ALNUM) != 0
+                    yield Span(start, index, byte_start, offset)
+                start = index
+                byte_start = offset
+                alnum = False
+            elif decision != NO_BREAK and decision != ABSORBED:
+                need = decision
+                pending = index
+                pending_byte = offset
+                pending_alnum = False
+            is_alnum = (value & tables.WORD_ALNUM) != 0
+            if need != NO_BREAK:
+                pending_alnum = pending_alnum or is_alnum
+            else:
+                alnum = alnum or is_alnum
+            raw = kind
+            if decision != ABSORBED:
+                before = last
+                last = kind
+                ri = ri + 1 if kind == tables.WB_REGIONAL_INDICATOR else 0
+            index += 1
+            offset += scalar.byte_len()
         if need != NO_BREAK:
-            pending_alnum = pending_alnum or is_alnum
-        else:
-            alnum = alnum or is_alnum
-        raw = kind
-        if decision != ABSORBED:
-            before = last
-            last = kind
-            ri = ri + 1 if kind == tables.WB_REGIONAL_INDICATOR else 0
-        index += 1
-        offset += scalar.byte_len()
-    if need != NO_BREAK:
-        if alnum or not words_only:
-            yield Span(start, pending, byte_start, pending_byte)
-        start = pending
-        byte_start = pending_byte
-        alnum = pending_alnum
-    if index > 0 and (alnum or not words_only):
-        yield Span(start, index, byte_start, offset)
+            if alnum or not words_only:
+                yield Span(start, pending, byte_start, pending_byte)
+            start = pending
+            byte_start = pending_byte
+            alnum = pending_alnum
+        if index > 0 and (alnum or not words_only):
+            yield Span(start, index, byte_start, offset)
 
 
 # Every segment between UAX #29 word boundaries, including spaces and
@@ -322,68 +326,70 @@ def sentence_continues(aterm: bool, phase: i64, last: i64, before_term: i64, kin
 
 # Sentences of `text`, in order. Allocates nothing.
 pub def sentences(text: str) -> Generator[Span]:
-    mut index = 0
-    mut offset = 0
-    mut start = 0
-    mut byte_start = 0
-    mut raw = -1
-    mut last = -1
-    mut before_term = -1
-    # 0: outside a terminator, 1: SATerm Close*, 2: SATerm Close* Sp+.
-    mut phase = 0
-    mut aterm = False
-    # An SB11 boundary that SB8 removes if a Lower follows before a scalar
-    # that ends the lookahead.
-    mut pending = -1
-    mut pending_byte = 0
-    for scalar in text:
-        kind = tables.sentence(code(&scalar))
-        ignored = kind == tables.SB_EXTEND or kind == tables.SB_FORMAT
-        if raw == tables.SB_CR and kind == tables.SB_LF:
-            last = kind
-        elif raw >= 0 and not is_para_sep(raw) and ignored:
-            # SB5: Extend and Format continue the preceding scalar.
-            pass
-        else:
-            if raw >= 0 and is_para_sep(raw):
-                yield Span(start, index, byte_start, offset)
-                start = index
-                byte_start = offset
-                phase = 0
-                pending = -1
-            elif raw >= 0:
-                if pending >= 0 and ends_lookahead(kind):
-                    if kind != tables.SB_LOWER:
-                        yield Span(start, pending, byte_start, pending_byte)
-                        start = pending
-                        byte_start = pending_byte
+    # Counters are bounded by the input string length in bytes.
+    unchecked trap:
+        mut index = 0
+        mut offset = 0
+        mut start = 0
+        mut byte_start = 0
+        mut raw = -1
+        mut last = -1
+        mut before_term = -1
+        # 0: outside a terminator, 1: SATerm Close*, 2: SATerm Close* Sp+.
+        mut phase = 0
+        mut aterm = False
+        # An SB11 boundary that SB8 removes if a Lower follows before a scalar
+        # that ends the lookahead.
+        mut pending = -1
+        mut pending_byte = 0
+        for scalar in text:
+            kind = tables.sentence(code(&scalar))
+            ignored = kind == tables.SB_EXTEND or kind == tables.SB_FORMAT
+            if raw == tables.SB_CR and kind == tables.SB_LF:
+                last = kind
+            elif raw >= 0 and not is_para_sep(raw) and ignored:
+                # SB5: Extend and Format continue the preceding scalar.
+                pass
+            else:
+                if raw >= 0 and is_para_sep(raw):
+                    yield Span(start, index, byte_start, offset)
+                    start = index
+                    byte_start = offset
+                    phase = 0
                     pending = -1
-                if phase > 0 and not sentence_continues(aterm, phase, last, before_term, kind):
-                    if aterm and not ends_lookahead(kind):
-                        pending = index
-                        pending_byte = offset
-                    else:
-                        yield Span(start, index, byte_start, offset)
-                        start = index
-                        byte_start = offset
-            if is_sa_term(kind):
-                before_term = last
-                phase = 1
-                aterm = kind == tables.SB_ATERM
-            elif kind == tables.SB_SP and phase > 0:
-                phase = 2
-            elif not (kind == tables.SB_CLOSE and phase == 1):
-                phase = 0
-            last = kind
-        raw = kind
-        index += 1
-        offset += scalar.byte_len()
-    if pending >= 0:
-        yield Span(start, pending, byte_start, pending_byte)
-        start = pending
-        byte_start = pending_byte
-    if index > 0:
-        yield Span(start, index, byte_start, offset)
+                elif raw >= 0:
+                    if pending >= 0 and ends_lookahead(kind):
+                        if kind != tables.SB_LOWER:
+                            yield Span(start, pending, byte_start, pending_byte)
+                            start = pending
+                            byte_start = pending_byte
+                        pending = -1
+                    if phase > 0 and not sentence_continues(aterm, phase, last, before_term, kind):
+                        if aterm and not ends_lookahead(kind):
+                            pending = index
+                            pending_byte = offset
+                        else:
+                            yield Span(start, index, byte_start, offset)
+                            start = index
+                            byte_start = offset
+                if is_sa_term(kind):
+                    before_term = last
+                    phase = 1
+                    aterm = kind == tables.SB_ATERM
+                elif kind == tables.SB_SP and phase > 0:
+                    phase = 2
+                elif not (kind == tables.SB_CLOSE and phase == 1):
+                    phase = 0
+                last = kind
+            raw = kind
+            index += 1
+            offset += scalar.byte_len()
+        if pending >= 0:
+            yield Span(start, pending, byte_start, pending_byte)
+            start = pending
+            byte_start = pending_byte
+        if index > 0:
+            yield Span(start, index, byte_start, offset)
 
 
 # ---------------------------------------------------------------------------
@@ -440,11 +446,7 @@ def allocation(error: std.bytes.BytesError) -> AllocError:
 
 
 def collect(text: &str, spans: Generator[Span]) -> Result[list[str], AllocError]:
-    source = match std.bytes.from_text(text):
-        case Ok(value):
-            value
-        case Err(error):
-            return Err(allocation(error))
+    source = std.bytes.from_text(text)?
     mut pieces: list[str] = []?
     for span in spans:
         piece = match source.to_text_range(span.byte_start, span.byte_stop):

@@ -72,7 +72,7 @@ def test_scalar_width() -> Result[(), TestError | AllocError | BytesError]:
 
 
 # Every fully-qualified emoji and component in emoji-test.txt is two columns.
-def test_emoji_test_file() -> Result[(), TestError | AllocError | BytesError]:
+def test_emoji_test_file() -> Result[(), TestError | AllocError | BytesError | OverflowError[i64]]:
     mut checked = 0
     for line in EMOJI_TESTS.split("\n")?:
         if line.startswith("#") or ";" not in line:
