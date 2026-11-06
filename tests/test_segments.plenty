@@ -23,7 +23,7 @@ def test_grapheme_spans_carry_scalar_and_byte_offsets() -> Result[(), TestError 
     Ok(())
 
 
-def test_empty_text_has_no_segments() -> Result[(), TestError | AllocError | BytesError]:
+def test_empty_text_has_no_segments() -> Result[(), TestError | AllocError | BytesError | OverflowError[i64]]:
     mut count = 0
     for _ in unicode_text.graphemes(""):
         count += 1
@@ -73,7 +73,7 @@ def test_sentence_list() -> Result[(), TestError | AllocError | BytesError]:
     Ok(())
 
 
-def test_iteration_allocates_nothing() -> Result[(), TestError | AllocError | BytesError]:
+def test_iteration_allocates_nothing() -> Result[(), TestError | AllocError | BytesError | OverflowError[i64]]:
     text = spell("Hello, wörld! 👩<200D>🔬 are here. Ça va? 日本語のテキスト.")?
     std.test.fail_allocations_after(0)?
     mut graphemes = 0

@@ -8,7 +8,7 @@ from std.bytes import Bytes, BytesError
 from unicode_text import Ambiguous
 
 
-def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), BytesError]:
+def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), AllocError]:
     if c < 128:
         buffer.push(u8(c))?
     elif c < 2048:
@@ -27,19 +27,21 @@ def push_scalar(buffer: &mut Bytes, c: i64) -> Result[(), BytesError]:
 
 
 def hex_digit(scalar: &str) -> i64:
-    match ord(*scalar):
-        case Ok(value):
-            d = i64(value)
-            if d <= 57:
-                return d - 48
-            if d <= 70:
-                return d - 55
-            d - 87
-        case Err(_):
-            0
+    # ord returns a Unicode scalar, so these small subtractions fit i64.
+    unchecked trap:
+        match ord(*scalar):
+            case Ok(value):
+                d = i64(value)
+                if d <= 57:
+                    return d - 48
+                if d <= 70:
+                    return d - 55
+                d - 87
+            case Err(_):
+                0
 
 
-def main() -> Result[(), AllocError | IoError | BytesError]:
+def main() -> Result[(), AllocError | IoError | BytesError | OverflowError[i64]]:
     arguments = args()?
     mut buffer = std.bytes.empty()?
     mut c = 0

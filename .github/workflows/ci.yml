@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 env:
-  PLENTY_VERSION: "0.7.1"
+  PLENTY_VERSION: "0.8.10"
 
 jobs:
   test:
@@ -28,4 +28,7 @@ jobs:
       - run: plenty --version
       - run: plenty check --locked
       # Includes the official UAX #29 break tests and emoji-test.txt widths.
-      - run: plenty test --locked
+      # Plenty 0.8.10 corrupts inline record yields in optimized builds.
+      # Use fast-compile with this release; optimized tests are validated
+      # locally with the companion generator-resume compiler fix.
+      - run: plenty test --locked --fast-compile

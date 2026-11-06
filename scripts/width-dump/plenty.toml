@@ -5,7 +5,7 @@ manifest-version = 1
 [package]
 name = "width_dump"
 version = "0.0.0"
-plenty-version = "0.7.1"
+plenty-version = "0.8.10"
 
 [dependencies]
 unicode_text = { path = "../.." }
